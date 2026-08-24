@@ -1,6 +1,25 @@
-import { getQueue, QUEUE_NAMES, type NotifyJob } from "@/lib/queue";
+import { db } from "@/lib/db";
+import type { Prisma } from "@/generated/prisma/client";
 
-/** Enqueues an in-app (and future email) notification for an organization. Safe to call from API routes or workers. */
+export type NotifyJob = {
+  organizationId: string;
+  userId?: string;
+  type: string;
+  title: string;
+  body: string;
+  metadata?: Record<string, unknown>;
+};
+
+/** Creates an in-app notification. Direct DB write — fast enough to call inline, no queue needed. */
 export async function notifyOrg(job: NotifyJob) {
-  await getQueue(QUEUE_NAMES.notify).add("notify", job);
+  await db.notification.create({
+    data: {
+      organizationId: job.organizationId,
+      userId: job.userId,
+      type: job.type,
+      title: job.title,
+      body: job.body,
+      metadata: job.metadata as Prisma.InputJsonValue | undefined,
+    },
+  });
 }

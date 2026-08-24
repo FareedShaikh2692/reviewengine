@@ -4,7 +4,8 @@
 
 A multi-tenant SaaS platform that helps businesses collect genuine, authentic customer reviews through
 automated review-request campaigns, a visual automation builder, AI review analytics, and a full Super Admin
-portal. Built with Next.js 16 (App Router), PostgreSQL/Prisma, and BullMQ/Redis.
+portal. Built with Next.js 16 (App Router) and PostgreSQL/Prisma — deploys cleanly to Vercel with no other
+infrastructure required.
 
 The platform never generates fake reviews, never auto-submits reviews on a customer's behalf, and never hides
 legitimate negative feedback — it only makes it easier for real customers to leave real reviews.
@@ -14,7 +15,11 @@ legitimate negative feedback — it only makes it easier for real customers to l
 - **App**: Next.js 16 (App Router, TypeScript, Turbopack) — route handlers under `src/app/api/*` serve as the backend.
 - **Database**: PostgreSQL via Prisma 7 (`prisma/schema.prisma`), driver adapter (`@prisma/adapter-pg`).
 - **Auth**: Auth.js (NextAuth v5) — Google OAuth + email/password credentials, email verification, password reset.
-- **Background jobs**: BullMQ + Redis (`src/worker.ts`) — review-request sends, campaign engine, automation engine, AI analysis.
+- **Background jobs**: no queue infrastructure needed. Single-item actions (sending a review request, AI analysis,
+  a manual review sync) run inline in the request that triggers them. Periodic work (advancing campaigns/automations,
+  fanning out review syncs) runs via **Vercel Cron** hitting `/api/cron/tick` (see `vercel.json`) — or, if you're
+  self-hosting somewhere that supports a long-lived process, `src/worker.ts` runs the same periodic logic on a
+  plain `setInterval` loop. Same underlying job functions either way (`src/lib/jobs/*`).
 - **UI**: Tailwind CSS v4 + a small custom design system (`src/components/ui`), Recharts, React Flow (automation builder), Framer Motion.
 
 ## Integrations — real, with mock fallback
@@ -33,25 +38,22 @@ Every third-party integration lives behind an adapter in `src/lib/integrations/*
 
 ## Local setup
 
-### 1. Start Postgres + Redis
+### 1. Start Postgres
 
-Either run them via Docker Compose:
+Either run it via Docker Compose:
 
 ```bash
 docker compose up -d
 ```
 
-...or use local installs (e.g. Homebrew). If you use Docker Compose, Postgres is exposed on `localhost:5433`
+...or use a local install (e.g. Homebrew). If you use Docker Compose, Postgres is exposed on `localhost:5433`
 with user/password `reviewengine` / `reviewengine`.
 
 ### 2. Configure environment
 
-```bash
-cp .env.example .env   # if present, otherwise edit .env directly
-```
-
-At minimum, set `DATABASE_URL` and `REDIS_URL` to match step 1. Every other variable can stay blank — the app
-runs entirely in mock mode.
+Edit `.env` (copy from `.env.example` if you're starting fresh). At minimum, set `DATABASE_URL` to match step 1,
+plus `NEXTAUTH_SECRET`, `NEXTAUTH_URL`, `APP_URL`, and `INTEGRATION_TOKEN_ENCRYPTION_KEY` (any non-empty values
+work for local dev). Every other variable can stay blank — the app runs entirely in mock mode.
 
 ### 3. Install, migrate, seed
 
@@ -63,16 +65,38 @@ npm run seed         # demo orgs, businesses, customers, reviews, campaigns, aut
 
 The seed script prints login credentials for a super admin and two demo business owners on completion.
 
-### 4. Run the app and the worker (two terminals)
+### 4. Run the app
 
 ```bash
 npm run dev      # Next.js app on http://localhost:3000
-npm run worker   # background job processor — required for sending review requests,
-                  # running campaigns/automations, and AI analysis
 ```
 
-Background jobs are enqueued by the app but processed by `worker.ts` — review requests, campaign steps, and
-automation ticks will queue up but never execute unless the worker is running.
+Campaigns and automations advance on a schedule (`/api/cron/tick`) rather than instantly — call that route
+manually during local testing (`curl http://localhost:3000/api/cron/tick`), or run `npm run worker` in a second
+terminal to tick every 60 seconds automatically. Review request sends and AI analysis happen inline and don't
+need either.
+
+## Deploying to Vercel
+
+1. **Database**: provision a hosted Postgres reachable from Vercel — Vercel Postgres, [Neon](https://neon.tech), or
+   [Supabase](https://supabase.com) all work. Use the **pooled** connection string if offered (serverless functions
+   open many short-lived connections).
+2. **Push this repo to GitHub** and import it in the Vercel dashboard.
+3. **Set environment variables** in Project → Settings → Environment Variables: `DATABASE_URL`, `NEXTAUTH_SECRET`
+   (any long random string), `NEXTAUTH_URL` and `APP_URL` (your production domain, e.g. `https://your-app.vercel.app`),
+   `INTEGRATION_TOKEN_ENCRYPTION_KEY` (any long random string), and `CRON_SECRET` (any long random string — Vercel
+   automatically sends it as the `Authorization` header on cron requests to `/api/cron/tick`, which the route
+   checks). Add any real integration keys from the table above if you have them; leave the rest blank for mock mode.
+4. **Run migrations against the production database** before or right after first deploy:
+   ```bash
+   DATABASE_URL="<your production URL>" npx prisma migrate deploy
+   DATABASE_URL="<your production URL>" npm run seed   # optional — demo data
+   ```
+5. **Deploy.** `vercel.json` already configures the cron job that advances campaigns/automations every 5 minutes —
+   check your Vercel plan's minimum cron interval and adjust the schedule in `vercel.json` if needed.
+
+No Redis, no separate worker process, and nothing else to provision — the whole app runs on Vercel + one Postgres
+database.
 
 ## Golden path to try
 
@@ -106,10 +130,12 @@ src/app/                   Pages and API routes (App Router)
   api/                       Route handlers backing the above
 src/lib/
   integrations/              Pluggable provider adapters (see table above)
-  jobs/                      Background job implementations, run by src/worker.ts
+  jobs/                      Background job implementations — called inline from API routes
+                             for single-item actions, or periodically from /api/cron/tick
+                             (Vercel Cron) / src/worker.ts (self-hosted)
   tenant.ts, rbac.ts, api.ts Multi-tenant auth/RBAC/audit/rate-limit plumbing
 src/components/            Design system (ui/), and feature components per module
-src/worker.ts               BullMQ worker entrypoint (npm run worker)
+src/worker.ts               Optional self-hosted alternative to Vercel Cron (npm run worker)
 ```
 
 ## Known simplifications

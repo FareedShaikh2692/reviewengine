@@ -1,7 +1,7 @@
 import { db } from "@/lib/db";
-import { getQueue, QUEUE_NAMES, type ReviewSyncJob } from "@/lib/queue";
+import { processReviewSync } from "@/lib/jobs/review-sync";
 
-/** Fans out a review-sync job for every business with a connected Google integration. */
+/** Runs a review sync for every business with a connected Google integration. */
 export async function processReviewSyncDispatch() {
   const integrations = await db.businessIntegration.findMany({
     where: { provider: "GOOGLE", status: "CONNECTED" },
@@ -9,7 +9,10 @@ export async function processReviewSyncDispatch() {
   });
 
   for (const integration of integrations) {
-    const job: ReviewSyncJob = { organizationId: integration.organizationId, businessId: integration.businessId };
-    await getQueue(QUEUE_NAMES.reviewSync).add("sync", job);
+    try {
+      await processReviewSync({ organizationId: integration.organizationId, businessId: integration.businessId });
+    } catch (err) {
+      console.error(`[review-sync-dispatch] failed for business ${integration.businessId}`, err);
+    }
   }
 }

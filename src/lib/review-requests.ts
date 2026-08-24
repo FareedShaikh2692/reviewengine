@@ -1,7 +1,7 @@
 import { db } from "@/lib/db";
 import { env } from "@/lib/env";
 import { renderTemplate, DEFAULT_REQUEST_TEMPLATE } from "@/lib/message-template";
-import { getQueue, QUEUE_NAMES } from "@/lib/queue";
+import { processSendReviewRequest } from "@/lib/jobs/send-review-request";
 import type { RequestChannel } from "@/generated/prisma/enums";
 
 export async function createReviewRequest(params: {
@@ -40,7 +40,9 @@ export async function createReviewRequest(params: {
   await db.reviewRequest.update({ where: { id: request.id }, data: { message } });
 
   if (params.sendImmediately !== false) {
-    await getQueue(QUEUE_NAMES.sendReviewRequest).add("send", { reviewRequestId: request.id });
+    // Sending is a single fast DB write + one outbound HTTP call — cheap enough to run inline,
+    // no background queue required.
+    await processSendReviewRequest(request.id);
   }
 
   return request;
