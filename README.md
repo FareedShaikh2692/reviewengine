@@ -92,8 +92,11 @@ need either.
    DATABASE_URL="<your production URL>" npx prisma migrate deploy
    DATABASE_URL="<your production URL>" npm run seed   # optional — demo data
    ```
-5. **Deploy.** `vercel.json` already configures the cron job that advances campaigns/automations every 5 minutes —
-   check your Vercel plan's minimum cron interval and adjust the schedule in `vercel.json` if needed.
+5. **Deploy.** `vercel.json` runs the cron job once a day (`0 9 * * *`) — that's the Hobby plan limit (Vercel
+   rejects the deploy if you configure anything more frequent without Pro). This is fine for this app: campaign
+   and automation steps are scheduled in whole days (Day 0, Day 3, Day 7…), so daily ticks are all the timing
+   precision they need — review request sends themselves are instant regardless, since those run inline. On a Pro
+   plan, tighten the schedule in `vercel.json` (e.g. `*/5 * * * *`) if you want tighter same-day timing.
 
 No Redis, no separate worker process, and nothing else to provision — the whole app runs on Vercel + one Postgres
 database.

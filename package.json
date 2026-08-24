@@ -9,6 +9,7 @@
     "lint": "eslint",
     "worker": "tsx watch src/worker.ts",
     "seed": "tsx prisma/seed.ts",
+    "seed:catalog": "tsx prisma/seed-catalog.ts",
     "db:migrate": "prisma migrate dev",
     "db:studio": "prisma studio",
     "postinstall": "prisma generate"
